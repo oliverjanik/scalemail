@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"smtp-server/daemon"
-	"smtp-server/emailq"
+	"github.com/oliverjanik/scalemail/daemon"
+	"github.com/oliverjanik/scalemail/emailq"
 )
 
 var (
