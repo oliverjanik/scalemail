@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"log"
 	"net"
 	"net/smtp"
@@ -13,10 +14,14 @@ import (
 )
 
 var (
-	q *emailq.EmailQ
+	q         *emailq.EmailQ
+	localname string
 )
 
 func main() {
+	flag.StringVar(&localname, "localname", "localhost", "What server sends out as helo greeting")
+	flag.Parse()
+
 	// open up persistent queue
 	var err error
 	q, err = emailq.New("emails.db")
@@ -29,15 +34,19 @@ func main() {
 
 	go sendLoop(t.C)
 
-	daemon.HandleFunc(handle)
-	daemon.ListenAndServe("")
+	daemon.HandleFunc(func(msg *daemon.Msg) {
+		handle(msg, t.C)
+	})
+
+	daemon.ListenAndServe(":587")
 	t.Stop()
 }
 
-func handle(msg *daemon.Msg) {
+func handle(msg *daemon.Msg, c <-chan time.Time) {
 	for _, m := range group(msg) {
 		log.Print("Pushing incoming email")
 		err := q.Push(m)
+
 		if err != nil {
 			log.Print(err)
 		}
@@ -75,11 +84,14 @@ func sendLoop(tick <-chan time.Time) {
 				log.Print(err)
 			}
 
-			if msg != nil {
-				err = send(msg)
-				if err != nil {
-					log.Print(err)
-				}
+			if msg == nil {
+				break
+			}
+
+			log.Println("Sending email out to", msg.Host)
+			err = send(msg)
+			if err != nil {
+				log.Print(err)
 			}
 		}
 
@@ -94,9 +106,40 @@ func send(msg *emailq.Msg) error {
 	}
 
 	// todo: make sure we're sending matching HELO
-	log.Println("Sending email out to", msg.Host)
-	smtp.SendMail(mda, nil, msg.From, msg.To, msg.Data)
-	return nil
+	c, err := smtp.Dial(mda)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	if err = c.Hello(localname); err != nil {
+		return err
+	}
+
+	if err = c.Mail(msg.From); err != nil {
+		return err
+	}
+
+	for _, addr := range msg.To {
+		if err = c.Rcpt(addr); err != nil {
+			return err
+		}
+	}
+
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+
+	if _, err = w.Write(msg.Data); err != nil {
+		return err
+	}
+
+	if err = w.Close(); err != nil {
+		return err
+	}
+
+	return c.Quit()
 }
 
 // Find Mail Delivery Agent based on DNS MX record
