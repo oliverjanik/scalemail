@@ -49,6 +49,16 @@ func (q *EmailQ) Close() error {
 	return q.db.Close()
 }
 
+func (q *EmailQ) Length() (count int) {
+	q.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket(incomingBucket)
+		count = b.Stats().KeyN
+		return nil
+	})
+
+	return
+}
+
 func (q *EmailQ) Push(msg *Msg) error {
 	key := []byte(time.Now().UTC().Format(time.RFC3339Nano))
 	value := encode(msg)

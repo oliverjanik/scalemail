@@ -73,7 +73,7 @@ func converse(c *textproto.Conn) {
 			return
 		}
 
-		log.Println(s)
+		//log.Println(s)
 
 		cmd := s[:4]
 
@@ -110,7 +110,7 @@ func converse(c *textproto.Conn) {
 }
 
 func write(c *textproto.Conn, msg string) {
-	log.Println(msg)
+	// log.Println(msg)
 	if err := c.Writer.PrintfLine(msg); err != nil {
 		panic(err)
 	}

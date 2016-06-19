@@ -16,6 +16,7 @@ import (
 var (
 	q         *emailq.EmailQ
 	localname string
+	signal    chan struct{}
 )
 
 func main() {
@@ -30,26 +31,35 @@ func main() {
 	}
 	defer q.Close()
 
+	signal = make(chan struct{}, 1)
+
 	t := time.NewTicker(time.Duration(1) * time.Minute)
 
 	go sendLoop(t.C)
 
 	daemon.HandleFunc(func(msg *daemon.Msg) {
 		handle(msg, t.C)
+
+		select {
+		case signal <- struct{}{}:
+		default:
+		}
 	})
 
-	daemon.ListenAndServe(":587")
+	log.Println("Listening on localhost:587")
+	daemon.ListenAndServe("localhost:587")
 	t.Stop()
 }
 
 func handle(msg *daemon.Msg, c <-chan time.Time) {
 	for _, m := range group(msg) {
-		log.Print("Pushing incoming email")
 		err := q.Push(m)
 
 		if err != nil {
 			log.Print(err)
+			continue
 		}
+		log.Println("Pushing incoming email. Queue length", q.Length())
 	}
 }
 
@@ -88,14 +98,21 @@ func sendLoop(tick <-chan time.Time) {
 				break
 			}
 
-			log.Println("Sending email out to", msg.Host)
-			err = send(msg)
-			if err != nil {
-				log.Print(err)
-			}
+			go func(msg *emailq.Msg) {
+				log.Println("Sending email out to", msg.Host)
+				err = send(msg)
+				if err != nil {
+					log.Println("Error, requing:", err)
+					time.Sleep(1 * time.Minute)
+					q.Push(msg)
+				}
+			}(msg)
 		}
 
-		<-tick
+		select {
+		case <-tick:
+		case <-signal:
+		}
 	}
 }
 
