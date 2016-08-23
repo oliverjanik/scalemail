@@ -1,9 +1,5 @@
 TestClient/
-mta/
-my.db
-forwarder/
-smtp-server.exe
 scalemail.exe
-my.db.lock
-test/test.exe
 scalemail.exe~
+emailq/emails.db
+emailq/emails.db.lock

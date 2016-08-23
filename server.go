@@ -54,12 +54,17 @@ func main() {
 func handle(msg *daemon.Msg, c <-chan time.Time) {
 	for _, m := range group(msg) {
 		err := q.Push(m)
-
 		if err != nil {
 			log.Print(err)
 			continue
 		}
 		log.Println("Pushing incoming email. Queue length", q.Length())
+	}
+
+	// wake up sender
+	select {
+	case signal <- struct{}{}:
+	default:
 	}
 }
 
@@ -87,9 +92,8 @@ func group(msg *daemon.Msg) (messages []*emailq.Msg) {
 func sendLoop(tick <-chan time.Time) {
 	// repeat every tick
 	for {
-		// send all email
 		for {
-			msg, err := q.Pop()
+			k, msg, err := q.PopIncoming()
 			if err != nil {
 				log.Print(err)
 			}
@@ -106,6 +110,7 @@ func sendLoop(tick <-chan time.Time) {
 					time.Sleep(1 * time.Minute)
 					q.Push(msg)
 				}
+				q.RemoveDelivered(k)
 			}(msg)
 		}
 
@@ -122,7 +127,6 @@ func send(msg *emailq.Msg) error {
 		return err
 	}
 
-	// todo: make sure we're sending matching HELO
 	c, err := smtp.Dial(mda)
 	if err != nil {
 		return err
