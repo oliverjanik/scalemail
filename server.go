@@ -93,7 +93,7 @@ func sendLoop(tick <-chan time.Time) {
 	// repeat every tick
 	for {
 		for {
-			k, msg, err := q.PopIncoming()
+			k, msg, err := q.Pop()
 			if err != nil {
 				log.Print(err)
 			}

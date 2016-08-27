@@ -1,6 +1,7 @@
 package emailq
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
@@ -18,13 +19,17 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		queue.Close()
-		os.Remove(testDb)
-	}()
 
 	q = queue
-	os.Exit(m.Run())
+	r := m.Run()
+
+	q.Close()
+	err = os.Remove(testDb)
+	if err != nil {
+		panic(err)
+	}
+
+	os.Exit(r)
 }
 
 func TestNormalFlow(t *testing.T) {
@@ -33,7 +38,7 @@ func TestNormalFlow(t *testing.T) {
 		t.Error("Error pushing:", err)
 	}
 
-	key, _, err := q.PopIncoming()
+	key, _, err := q.Pop()
 	if err != nil {
 		t.Error("Error popping:", err)
 	}
@@ -47,17 +52,17 @@ func TestNormalFlow(t *testing.T) {
 func TestRetryFlow(t *testing.T) {
 	err := q.Push(createMsg())
 
-	key, _, err := q.PopIncoming()
+	key, _, err := q.Pop()
 	if err != nil {
 		t.Error("Error popping:", err)
 	}
 
-	err = q.PushRetry(key)
+	err = q.Retry(key)
 	if err != nil {
 		t.Error("Error pushing retry:", err)
 	}
 
-	key, _, err = q.PopRetry()
+	key, _, err = q.Pop()
 	if err != nil {
 		t.Error("Error popping retry:", err)
 	}
@@ -71,24 +76,62 @@ func TestRetryFlow(t *testing.T) {
 func TestDeadFlow(t *testing.T) {
 	err := q.Push(createMsg())
 
-	key, _, err := q.PopIncoming()
+	key, _, err := q.Pop()
 	if err != nil {
 		t.Error("Error popping:", err)
 	}
 
-	err = q.PushRetry(key)
+	err = q.Retry(key)
 	if err != nil {
 		t.Error("Error pushing retry:", err)
 	}
 
-	key, _, err = q.PopRetry()
+	key, _, err = q.Pop()
 	if err != nil {
 		t.Error("Error popping retry:", err)
 	}
 
-	err = q.PushDeadLetter(key)
+	err = q.Kill(key)
 	if err != nil {
 		t.Error("Error pushing dead letter:", err)
+	}
+}
+
+func TestCrashFlow(t *testing.T) {
+	err := q.Push(createMsg())
+
+	k1, msg1, err := q.Pop()
+	if err != nil {
+		t.Error("Error popping:", err)
+	}
+
+	t.Log("k1", string(k1))
+
+	err = q.Recover()
+	if err != nil {
+		t.Error("Error recovering:", err)
+	}
+
+	t.Log("k1", string(k1))
+
+	k2, msg2, err := q.Pop()
+	if err != nil {
+		t.Error("Error popping:", err)
+	}
+
+	t.Log("k1", string(k1))
+
+	if bytes.Equal(k1, k2) {
+		t.Error("Message should get a new key", string(k1), string(k2))
+	}
+
+	if msg1.From != msg2.From {
+		t.Error("Outgoing message does not match", string(k1), string(k2))
+	}
+
+	err = q.RemoveDelivered(k2)
+	if err != nil {
+		t.Error("Error removing delivered:", err)
 	}
 }
 

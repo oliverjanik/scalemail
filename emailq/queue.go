@@ -12,7 +12,6 @@ import (
 var (
 	incomingBucket = []byte("incoming")
 	outgoingBucket = []byte("outgoing")
-	retryBucket    = []byte("retry")
 	deadBucket     = []byte("deadletter")
 )
 
@@ -23,15 +22,16 @@ type EmailQ struct {
 
 // Msg represents email message
 type Msg struct {
-	Host string
-	From string
-	To   []string
-	Data []byte
+	Host  string
+	From  string
+	To    []string
+	Data  []byte
+	Retry int
 }
 
 // New creates new instance of EmailQ
 func New(filepath string) (*EmailQ, error) {
-	db, err := bolt.Open("emails.db", 0600, nil)
+	db, err := bolt.Open(filepath, 0600, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -44,11 +44,6 @@ func New(filepath string) (*EmailQ, error) {
 		}
 
 		_, err = tx.CreateBucketIfNotExists(outgoingBucket)
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.CreateBucketIfNotExists(retryBucket)
 		if err != nil {
 			return err
 		}
@@ -95,8 +90,8 @@ func (q *EmailQ) Push(msg *Msg) error {
 	return err
 }
 
-// PushRetry takes msg from outgoing queue and places that in the Retry queue
-func (q *EmailQ) PushRetry(key []byte) error {
+// Retry takes msg from outgoing queue and places that in the Retry queue
+func (q *EmailQ) Retry(key []byte) error {
 	return q.db.Update(func(tx *bolt.Tx) error {
 		outgoing := tx.Bucket(outgoingBucket)
 
@@ -110,14 +105,26 @@ func (q *EmailQ) PushRetry(key []byte) error {
 			return err
 		}
 
-		retry := tx.Bucket(retryBucket)
+		incoming := tx.Bucket(incomingBucket)
 
-		return retry.Put(key, msg)
+		t, err := time.Parse(time.RFC3339Nano, string(key))
+		if err != nil {
+			return err
+		}
+
+		m := decode(msg)
+		m.Retry++
+		t = t.Add(time.Duration(m.Retry*m.Retry) * time.Minute)
+
+		key = []byte(t.Format(time.RFC3339Nano))
+		msg = encode(m)
+
+		return incoming.Put(key, msg)
 	})
 }
 
-// PushDeadLetter takes msg out of outgoing and pushed that to Dead Letter queue
-func (q *EmailQ) PushDeadLetter(key []byte) error {
+// Kill takes msg out of outgoing and pushed that to Dead Letter queue
+func (q *EmailQ) Kill(key []byte) error {
 	return q.db.Update(func(tx *bolt.Tx) error {
 		outgoing := tx.Bucket(outgoingBucket)
 
@@ -137,42 +144,12 @@ func (q *EmailQ) PushDeadLetter(key []byte) error {
 	})
 }
 
-// PopRetry fetches next item from Retry queue
-func (q *EmailQ) PopRetry() (k []byte, msg *Msg, err error) {
-	err = q.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(retryBucket)
-
-		var v []byte
-		k, v = b.Cursor().First()
-		if k == nil {
-			return nil
-		}
-
-		msg = decode(v)
-		err = b.Delete(k)
-		if err != nil {
-			return err
-		}
-
-		// stick things into outgoing bucket
-		b = tx.Bucket(outgoingBucket)
-		if b == nil {
-			return fmt.Errorf("Outgoing bucket is nil")
-		}
-
-		return b.Put(k, v)
-	})
-
-	return k, msg, err
-}
-
-// PopIncoming get next email from the queue
-func (q *EmailQ) PopIncoming() (k []byte, msg *Msg, err error) {
+// Pop get next email from the queue
+func (q *EmailQ) Pop() (key []byte, msg *Msg, err error) {
 	err = q.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(incomingBucket)
 
-		var v []byte
-		k, v = b.Cursor().First()
+		k, v := b.Cursor().First()
 		if k == nil {
 			return nil
 		}
@@ -183,16 +160,43 @@ func (q *EmailQ) PopIncoming() (k []byte, msg *Msg, err error) {
 			return err
 		}
 
+		// key needs to be cloned, k is not valid outside of the transaction
+		key = append(key, k...)
+
 		// stick things into outgoing bucket
 		b = tx.Bucket(outgoingBucket)
-		if b == nil {
-			return fmt.Errorf("Outgoing bucket is nil")
-		}
-
 		return b.Put(k, v)
 	})
 
-	return k, msg, err
+	return key, msg, err
+}
+
+// Recover re-queues outgoing emails that were interrupted
+func (q *EmailQ) Recover() error {
+	return q.db.Update(func(tx *bolt.Tx) error {
+		outgoing := tx.Bucket(outgoingBucket)
+		incoming := tx.Bucket(incomingBucket)
+
+		c := outgoing.Cursor()
+
+		for k, v := c.First(); k != nil; k, v = c.First() {
+			err := c.Delete() // delete from outgoing
+			if err != nil {
+				return nil
+			}
+
+			//fmt.Println("Recovering", string(k))
+
+			// reinsert into incoming
+			key := []byte(time.Now().UTC().Format(time.RFC3339Nano))
+
+			//fmt.Println("New key", string(key))
+
+			incoming.Put(key, v)
+		}
+
+		return nil
+	})
 }
 
 // RemoveDelivered removes successfully delivered message
