@@ -23,6 +23,8 @@ func main() {
 	flag.StringVar(&localname, "localname", "localhost", "What server sends out as helo greeting")
 	flag.Parse()
 
+	log.Println("Localname:", localname)
+
 	// open up persistent queue
 	var err error
 	q, err = emailq.New("emails.db")
@@ -31,27 +33,22 @@ func main() {
 	}
 	defer q.Close()
 
+	// signals new message just arrived
 	signal = make(chan struct{}, 1)
 
+	// wakes up sending goroutine every minute to check queue and run scheduled messages
 	t := time.NewTicker(time.Duration(1) * time.Minute)
 
 	go sendLoop(t.C)
 
-	daemon.HandleFunc(func(msg *daemon.Msg) {
-		handle(msg, t.C)
-
-		select {
-		case signal <- struct{}{}:
-		default:
-		}
-	})
+	daemon.HandleFunc(handle)
 
 	log.Println("Listening on localhost:587")
 	daemon.ListenAndServe("localhost:587")
 	t.Stop()
 }
 
-func handle(msg *daemon.Msg, c <-chan time.Time) {
+func handle(msg *daemon.Msg) {
 	for _, m := range group(msg) {
 		err := q.Push(m)
 		if err != nil {
@@ -90,34 +87,52 @@ func group(msg *daemon.Msg) (messages []*emailq.Msg) {
 }
 
 func sendLoop(tick <-chan time.Time) {
-	// repeat every tick
+	err := q.Recover()
+	if err != nil {
+		log.Println("Error recovering:", err)
+	}
+
 	for {
-		for {
-			k, msg, err := q.Pop()
-			if err != nil {
-				log.Print(err)
-			}
-
-			if msg == nil {
-				break
-			}
-
-			go func(msg *emailq.Msg) {
-				log.Println("Sending email out to", msg.Host)
-				err = send(msg)
-				if err != nil {
-					log.Println("Error, requing:", err)
-					time.Sleep(1 * time.Minute)
-					q.Push(msg)
-				}
-				q.RemoveDelivered(k)
-			}(msg)
+		key, msg, err := q.Pop()
+		if err != nil {
+			log.Print(err)
 		}
 
+		if key != nil {
+			go sendMsg(key, msg)
+		}
+
+		// wait for signal or tick
 		select {
 		case <-tick:
 		case <-signal:
 		}
+	}
+}
+
+func sendMsg(key []byte, msg *emailq.Msg) {
+	log.Println("Sending email out to", msg.To)
+	err := send(msg)
+	if err == nil {
+		err = q.RemoveDelivered(key)
+		if err != nil {
+			log.Println("Error removing delivered:", err)
+		}
+		return
+	}
+
+	// handle error
+	if msg.Retry == 5 {
+		log.Println("Maximum retries reached:", msg.To)
+		err = q.Kill(key)
+		if err != nil {
+			log.Println("Error killing msg:", err)
+		}
+	}
+
+	err = q.Retry(key)
+	if err != nil {
+		log.Println("Error retrying:", err)
 	}
 }
 

@@ -114,7 +114,7 @@ func (q *EmailQ) Retry(key []byte) error {
 
 		m := decode(msg)
 		m.Retry++
-		t = t.Add(time.Duration(m.Retry*m.Retry) * time.Minute)
+		t = t.Add(time.Duration(m.Retry*m.Retry*m.Retry) * time.Minute)
 
 		key = []byte(t.Format(time.RFC3339Nano))
 		msg = encode(m)
