@@ -154,6 +154,15 @@ func (q *EmailQ) Pop() (key []byte, msg *Msg, err error) {
 			return nil
 		}
 
+		t, err := time.Parse(time.RFC3339Nano, string(k))
+		if err != nil {
+			return err
+		}
+
+		if t.After(time.Now().UTC()) {
+			return nil
+		}
+
 		msg = decode(v)
 		err = b.Delete(k)
 		if err != nil {
@@ -185,12 +194,8 @@ func (q *EmailQ) Recover() error {
 				return nil
 			}
 
-			//fmt.Println("Recovering", string(k))
-
 			// reinsert into incoming
 			key := []byte(time.Now().UTC().Format(time.RFC3339Nano))
-
-			//fmt.Println("New key", string(key))
 
 			incoming.Put(key, v)
 		}

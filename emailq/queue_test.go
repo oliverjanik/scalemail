@@ -35,17 +35,17 @@ func TestMain(m *testing.M) {
 func TestNormalFlow(t *testing.T) {
 	err := q.Push(createMsg())
 	if err != nil {
-		t.Error("Error pushing:", err)
+		t.Fatal("Error pushing:", err)
 	}
 
 	key, _, err := q.Pop()
-	if err != nil {
-		t.Error("Error popping:", err)
+	if err != nil || key == nil {
+		t.Fatal("Error popping:", err)
 	}
 
 	err = q.RemoveDelivered(key)
 	if err != nil {
-		t.Error("Error removing delivered:", err)
+		t.Fatal("Error removing delivered:", err)
 	}
 }
 
@@ -53,23 +53,18 @@ func TestRetryFlow(t *testing.T) {
 	err := q.Push(createMsg())
 
 	key, _, err := q.Pop()
-	if err != nil {
-		t.Error("Error popping:", err)
+	if err != nil || key == nil {
+		t.Fatal("Error popping:", err)
 	}
 
 	err = q.Retry(key)
 	if err != nil {
-		t.Error("Error pushing retry:", err)
+		t.Fatal("Error pushing retry:", err)
 	}
 
 	key, _, err = q.Pop()
-	if err != nil {
-		t.Error("Error popping retry:", err)
-	}
-
-	err = q.RemoveDelivered(key)
-	if err != nil {
-		t.Error("Error removing delivered:", err)
+	if key != nil {
+		t.Fatal("Retry needs to wait")
 	}
 }
 
@@ -77,23 +72,13 @@ func TestDeadFlow(t *testing.T) {
 	err := q.Push(createMsg())
 
 	key, _, err := q.Pop()
-	if err != nil {
-		t.Error("Error popping:", err)
-	}
-
-	err = q.Retry(key)
-	if err != nil {
-		t.Error("Error pushing retry:", err)
-	}
-
-	key, _, err = q.Pop()
-	if err != nil {
-		t.Error("Error popping retry:", err)
+	if err != nil || key == nil {
+		t.Fatal("Error popping:", err)
 	}
 
 	err = q.Kill(key)
 	if err != nil {
-		t.Error("Error pushing dead letter:", err)
+		t.Fatal("Error pushing dead letter:", err)
 	}
 }
 
@@ -101,37 +86,31 @@ func TestCrashFlow(t *testing.T) {
 	err := q.Push(createMsg())
 
 	k1, msg1, err := q.Pop()
-	if err != nil {
-		t.Error("Error popping:", err)
+	if err != nil || k1 == nil {
+		t.Fatal("Error popping:", err)
 	}
-
-	t.Log("k1", string(k1))
 
 	err = q.Recover()
 	if err != nil {
-		t.Error("Error recovering:", err)
+		t.Fatal("Error recovering:", err)
 	}
-
-	t.Log("k1", string(k1))
 
 	k2, msg2, err := q.Pop()
 	if err != nil {
-		t.Error("Error popping:", err)
+		t.Fatal("Error popping:", err)
 	}
 
-	t.Log("k1", string(k1))
-
 	if bytes.Equal(k1, k2) {
-		t.Error("Message should get a new key", string(k1), string(k2))
+		t.Fatal("Message should get a new key", string(k1), string(k2))
 	}
 
 	if msg1.From != msg2.From {
-		t.Error("Outgoing message does not match", string(k1), string(k2))
+		t.Fatal("Outgoing message does not match", string(k1), string(k2))
 	}
 
 	err = q.RemoveDelivered(k2)
 	if err != nil {
-		t.Error("Error removing delivered:", err)
+		t.Fatal("Error removing delivered:", err)
 	}
 }
 
