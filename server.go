@@ -121,6 +121,8 @@ func sendMsg(key []byte, msg *emailq.Msg) {
 		return
 	}
 
+	log.Println("Sending failed, message scheduled for retry (", msg.Retry, "):", err)
+
 	// handle error
 	if msg.Retry == 5 {
 		log.Println("Maximum retries reached:", msg.To)
