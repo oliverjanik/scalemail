@@ -111,7 +111,12 @@ func sendLoop(tick <-chan time.Time) {
 }
 
 func sendMsg(key []byte, msg *emailq.Msg) {
-	log.Println("Sending email out to", msg.To)
+	if msg.Retry == 0 {
+		log.Println("Sending email out to", msg.To)
+	} else {
+		log.Printf("Retrying (%v) email out to %v\n", msg.Retry, msg.To)
+	}
+
 	err := send(msg)
 	if err == nil {
 		err = q.RemoveDelivered(key)
@@ -121,17 +126,18 @@ func sendMsg(key []byte, msg *emailq.Msg) {
 		return
 	}
 
-	log.Println("Sending failed, message scheduled for retry (", msg.Retry, "):", err)
+	log.Println("Sending failed, message scheduled for retry:", err)
 
-	// handle error
 	if msg.Retry == 5 {
 		log.Println("Maximum retries reached:", msg.To)
 		err = q.Kill(key)
 		if err != nil {
 			log.Println("Error killing msg:", err)
 		}
+		return
 	}
 
+	// schedule for retry
 	err = q.Retry(key)
 	if err != nil {
 		log.Println("Error retrying:", err)
