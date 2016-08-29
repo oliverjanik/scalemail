@@ -43,8 +43,11 @@ func main() {
 
 	daemon.HandleFunc(handle)
 
+	// run verification daemon
+	go daemon.ListenAndServe(":25", true)
+
 	log.Println("Listening on localhost:587")
-	daemon.ListenAndServe("localhost:587")
+	daemon.ListenAndServe("localhost:587", false)
 	t.Stop()
 }
 
@@ -128,7 +131,7 @@ func sendMsg(key []byte, msg *emailq.Msg) {
 
 	log.Println("Sending failed, message scheduled for retry:", err)
 
-	if msg.Retry == 5 {
+	if msg.Retry == 6 {
 		log.Println("Maximum retries reached:", msg.To)
 		err = q.Kill(key)
 		if err != nil {

@@ -8,31 +8,31 @@ import (
 	"regexp"
 )
 
-const (
-	addr = ":587"
-)
-
 var (
 	addrRegex = regexp.MustCompile("<(.*)>")
 )
 
+// Msg represents email message
 type Msg struct {
 	From string
 	To   []string
 	Data []byte
 }
 
+// HandlerFunc handles incoming msg
 type HandlerFunc func(msg *Msg)
 
 var defaultHandle HandlerFunc
 
+// HandleFunc sets HandlerFunc
 func HandleFunc(fn HandlerFunc) {
 	defaultHandle = fn
 }
 
-func ListenAndServe(addr string) error {
+// ListenAndServe starts listening loop
+func ListenAndServe(addr string, verifyOnly bool) error {
 	if addr == "" {
-		addr = "localhost:587"
+		addr = ":587"
 	}
 
 	l, err := net.Listen("tcp", addr)
@@ -46,12 +46,12 @@ func ListenAndServe(addr string) error {
 			return err
 		}
 
-		go handle(textproto.NewConn(c))
+		go handle(textproto.NewConn(c), verifyOnly)
 	}
 
 }
 
-func handle(c *textproto.Conn) {
+func handle(c *textproto.Conn, verifyOnly bool) {
 	defer c.Close()
 	defer func() {
 		if r := recover(); r != nil {
@@ -59,10 +59,10 @@ func handle(c *textproto.Conn) {
 		}
 	}()
 
-	converse(c)
+	converse(c, verifyOnly)
 }
 
-func converse(c *textproto.Conn) {
+func converse(c *textproto.Conn, verifyOnly bool) {
 	write(c, "220 At your service")
 
 	var msg Msg
@@ -72,8 +72,6 @@ func converse(c *textproto.Conn) {
 		if err == io.EOF {
 			return
 		}
-
-		//log.Println(s)
 
 		cmd := s[:4]
 
@@ -91,6 +89,11 @@ func converse(c *textproto.Conn) {
 			msg.To = append(msg.To, addr)
 			write(c, "250 Defending your honour")
 		case "DATA":
+			if verifyOnly {
+				write(c, "502 Verification service only")
+				return
+			}
+
 			write(c, "354 Give me a quest!")
 			data, err := c.ReadDotBytes()
 			if err != nil {
@@ -110,7 +113,6 @@ func converse(c *textproto.Conn) {
 }
 
 func write(c *textproto.Conn, msg string) {
-	// log.Println(msg)
 	if err := c.Writer.PrintfLine(msg); err != nil {
 		panic(err)
 	}
