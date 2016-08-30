@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"flag"
 	"log"
@@ -153,7 +154,9 @@ func send(msg *emailq.Msg) error {
 		return err
 	}
 
-	c, err := smtp.Dial(mda)
+	host := mda[:len(mda)-1]
+
+	c, err := smtp.Dial(host + ":25") // remove dot and add port
 	if err != nil {
 		return err
 	}
@@ -161,6 +164,14 @@ func send(msg *emailq.Msg) error {
 
 	if err = c.Hello(localname); err != nil {
 		return err
+	}
+
+	// attempt TLS
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		config := &tls.Config{ServerName: host}
+		if err = c.StartTLS(config); err != nil {
+			return err
+		}
 	}
 
 	if err = c.Mail(msg.From); err != nil {
@@ -201,6 +212,5 @@ func findMDA(host string) (string, error) {
 	}
 
 	// todo: support for multiple MX records
-	h := results[0].Host
-	return h[:len(h)-1] + ":25", nil
+	return results[0].Host, nil
 }
