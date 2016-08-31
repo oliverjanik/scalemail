@@ -107,7 +107,7 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 		case "QUIT":
 			write(c, "221 For the king")
 		default:
-			panic("Unknown command")
+			log.Println("Unknown command:", cmd)
 		}
 	}
 }
