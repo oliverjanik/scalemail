@@ -46,6 +46,10 @@ func ListenAndServe(addr string, verifyOnly bool) error {
 			return err
 		}
 
+		if verifyOnly {
+			log.Println("Incoming connection from", c.RemoteAddr().String())
+		}
+
 		go handle(textproto.NewConn(c), verifyOnly)
 	}
 
