@@ -108,6 +108,8 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 			defaultHandle(&msg)
 
 			write(c, "250 We move")
+		case "RSET":
+			write(c, "250 OK")
 		case "QUIT":
 			write(c, "221 For the king")
 		default:
