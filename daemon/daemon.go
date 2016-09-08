@@ -78,6 +78,10 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 			return
 		}
 
+		if verifyOnly {
+			log.Println("Incoming:", s)
+		}
+
 		cmd := strings.ToUpper(s[:4])
 
 		switch cmd {
