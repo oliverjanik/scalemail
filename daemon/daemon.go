@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/textproto"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -77,7 +78,7 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 			return
 		}
 
-		cmd := s[:4]
+		cmd := strings.ToUpper(s[:4])
 
 		switch cmd {
 		case "EHLO":
@@ -113,7 +114,7 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 		case "QUIT":
 			write(c, "221 For the king")
 		default:
-			log.Println("Unknown command:", cmd)
+			log.Println("Unknown command:", s)
 		}
 	}
 }
