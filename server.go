@@ -168,7 +168,10 @@ func send(msg *emailq.Msg) error {
 
 	// attempt TLS
 	if ok, _ := c.Extension("STARTTLS"); ok {
-		config := &tls.Config{ServerName: host}
+		config := &tls.Config{
+			ServerName:         host,
+			InsecureSkipVerify: true,
+		}
 		if err = c.StartTLS(config); err != nil {
 			return err
 		}
