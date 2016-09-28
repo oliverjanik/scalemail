@@ -44,11 +44,8 @@ func main() {
 
 	daemon.HandleFunc(handle)
 
-	// run verification daemon
-	go daemon.ListenAndServe(":25", true)
-
 	log.Println("Listening on localhost:587")
-	daemon.ListenAndServe("localhost:587", false)
+	daemon.ListenAndServe("localhost:587")
 	t.Stop()
 }
 

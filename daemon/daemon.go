@@ -31,7 +31,7 @@ func HandleFunc(fn HandlerFunc) {
 }
 
 // ListenAndServe starts listening loop
-func ListenAndServe(addr string, verifyOnly bool) error {
+func ListenAndServe(addr string) error {
 	if addr == "" {
 		addr = ":587"
 	}
@@ -47,16 +47,12 @@ func ListenAndServe(addr string, verifyOnly bool) error {
 			return err
 		}
 
-		if verifyOnly {
-			log.Println("Incoming connection from", c.RemoteAddr().String())
-		}
-
-		go handle(textproto.NewConn(c), verifyOnly)
+		go handle(textproto.NewConn(c))
 	}
 
 }
 
-func handle(c *textproto.Conn, verifyOnly bool) {
+func handle(c *textproto.Conn) {
 	defer c.Close()
 	defer func() {
 		if r := recover(); r != nil {
@@ -64,10 +60,10 @@ func handle(c *textproto.Conn, verifyOnly bool) {
 		}
 	}()
 
-	converse(c, verifyOnly)
+	converse(c)
 }
 
-func converse(c *textproto.Conn, verifyOnly bool) {
+func converse(c *textproto.Conn) {
 	write(c, "220 At your service")
 
 	var msg Msg
@@ -76,10 +72,6 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 		s, err := read(c)
 		if err == io.EOF {
 			return
-		}
-
-		if verifyOnly {
-			log.Println("Incoming:", s)
 		}
 
 		cmd := strings.ToUpper(s[:4])
@@ -98,11 +90,6 @@ func converse(c *textproto.Conn, verifyOnly bool) {
 			msg.To = append(msg.To, addr)
 			write(c, "250 Defending your honour")
 		case "DATA":
-			if verifyOnly {
-				write(c, "502 Verification service only")
-				return
-			}
-
 			write(c, "354 Give me a quest!")
 			data, err := c.ReadDotBytes()
 			if err != nil {
