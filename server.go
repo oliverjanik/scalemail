@@ -1,15 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"crypto"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"flag"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/smtp"
 	"strings"
 	"time"
 
+	dkim "github.com/emersion/go-dkim"
 	"github.com/oliverjanik/scalemail/daemon"
 	"github.com/oliverjanik/scalemail/emailq"
 )
@@ -17,14 +24,23 @@ import (
 var (
 	q         *emailq.EmailQ
 	localname string
+	dkimKey   string
+	signer    crypto.Signer
 	signal    chan struct{}
 )
 
 func main() {
 	flag.StringVar(&localname, "localname", "localhost", "What server sends out as helo greeting")
+	flag.StringVar(&dkimKey, "dkim", "", "DKIM Private Key used to sign the emails")
 	flag.Parse()
 
 	log.Println("Localname:", localname)
+	if dkimKey != "" {
+		signer = readDKIMKey(dkimKey)
+		if signer == nil {
+			log.Println("Could not parse DKIM Private key, emails will not be signed")
+		}
+	}
 
 	// open up persistent queue
 	var err error
@@ -189,8 +205,10 @@ func send(msg *emailq.Msg) error {
 		return err
 	}
 
-	if _, err = w.Write(msg.Data); err != nil {
-		return err
+	if signer == nil || sign(msg.Data, w) != nil {
+		if _, err = w.Write(msg.Data); err != nil {
+			return err
+		}
 	}
 
 	if err = w.Close(); err != nil {
@@ -213,4 +231,36 @@ func findMDA(host string) (string, error) {
 
 	// todo: support for multiple MX records
 	return results[0].Host, nil
+}
+
+func readDKIMKey(filename string) crypto.Signer {
+	buf, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil
+	}
+
+	block, _ := pem.Decode(buf)
+	if block == nil {
+		return nil
+	}
+
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		return nil
+	}
+
+	return key
+}
+
+func sign(email []byte, w io.Writer) error {
+	r := bytes.NewReader(email)
+	options := &dkim.SignOptions{
+		Domain:   "unifiiplatform.com",
+		Selector: "unifii",
+		Signer:   signer,
+	}
+
+	err := dkim.Sign(w, r, options)
+	log.Println("Error signing email:", err)
+	return err
 }

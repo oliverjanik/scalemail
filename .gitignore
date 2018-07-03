@@ -5,3 +5,5 @@ emailq/emails.db
 emailq/emails.db.lock
 emails.db
 emails.db.lock
+private.key
+public.key
