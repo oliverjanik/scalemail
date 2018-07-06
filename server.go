@@ -22,20 +22,24 @@ import (
 )
 
 var (
-	q         *emailq.EmailQ
-	localname string
-	dkimKey   string
-	signer    crypto.Signer
-	signal    chan struct{}
+	q            *emailq.EmailQ
+	localname    string
+	dkimKey      string
+	dkimDomain   string
+	dkimSelector string
+	signer       crypto.Signer
+	signal       chan struct{}
 )
 
 func main() {
 	flag.StringVar(&localname, "localname", "localhost", "What server sends out as helo greeting")
-	flag.StringVar(&dkimKey, "dkim", "", "DKIM Private Key used to sign the emails")
+	flag.StringVar(&dkimKey, "dkimKey", "", "DKIM Private Key used to sign the emails")
+	flag.StringVar(&dkimDomain, "dkimDomain", "", "DKIM Domain")
+	flag.StringVar(&dkimSelector, "dkimSelector", "", "DKIM Selector")
 	flag.Parse()
 
 	log.Println("Localname:", localname)
-	if dkimKey != "" {
+	if dkimKey != "" && dkimDomain != "" && dkimSelector != "" {
 		signer = readDKIMKey(dkimKey)
 		if signer == nil {
 			log.Println("Could not parse DKIM Private key, emails will not be signed")
@@ -61,7 +65,7 @@ func main() {
 	daemon.HandleFunc(handle)
 
 	log.Println("Listening on localhost:587")
-	daemon.ListenAndServe("localhost:587")
+	daemon.ListenAndServe("localhost:587", false)
 	t.Stop()
 }
 
@@ -255,12 +259,15 @@ func readDKIMKey(filename string) crypto.Signer {
 func sign(email []byte, w io.Writer) error {
 	r := bytes.NewReader(email)
 	options := &dkim.SignOptions{
-		Domain:   "unifiiplatform.com",
-		Selector: "unifii",
+		Domain:   dkimDomain,
+		Selector: dkimSelector,
 		Signer:   signer,
 	}
 
 	err := dkim.Sign(w, r, options)
-	log.Println("Error signing email:", err)
+	if err != nil {
+		log.Println("Error signing email:", err)
+	}
+
 	return err
 }
