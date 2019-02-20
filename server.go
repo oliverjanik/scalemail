@@ -40,9 +40,10 @@ func main() {
 
 	log.Println("Localname:", localname)
 	if dkimKey != "" && dkimDomain != "" && dkimSelector != "" {
-		signer = readDKIMKey(dkimKey)
-		if signer == nil {
-			log.Println("Could not parse DKIM Private key, emails will not be signed")
+		var err error
+		signer, err = readDKIMKey(dkimKey)
+		if err != nil {
+			log.Println("Could not parse DKIM Private key, emails will not be signed:", err)
 		}
 	}
 
@@ -64,8 +65,12 @@ func main() {
 
 	daemon.HandleFunc(handle)
 
-	log.Println("Listening on localhost:587")
-	daemon.ListenAndServe("localhost:587", false)
+	log.Println("Listening on :587")
+	err = daemon.ListenAndServe(":587", false)
+	if err != nil {
+		log.Println("Could not launch daeamon:", err)
+	}
+
 	t.Stop()
 }
 
@@ -237,23 +242,23 @@ func findMDA(host string) (string, error) {
 	return results[0].Host, nil
 }
 
-func readDKIMKey(filename string) crypto.Signer {
+func readDKIMKey(filename string) (crypto.Signer, error) {
 	buf, err := ioutil.ReadFile(filename)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	block, _ := pem.Decode(buf)
 	if block == nil {
-		return nil
+		return nil, errors.New("Could not decode PEM file")
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	return key
+	return key, nil
 }
 
 func sign(email []byte, w io.Writer) error {

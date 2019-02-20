@@ -1,5 +1,6 @@
 TestClient/
 scalemail.exe
+scalemail
 scalemail.exe~
 emailq/emails.db
 emailq/emails.db.lock
