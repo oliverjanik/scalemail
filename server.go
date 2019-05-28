@@ -262,6 +262,12 @@ func readDKIMKey(filename string) (crypto.Signer, error) {
 }
 
 func sign(email []byte, w io.Writer) error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println("dkin.Sign panicked:", r)
+		}
+	}()
+
 	r := bytes.NewReader(email)
 	options := &dkim.SignOptions{
 		Domain:   dkimDomain,
