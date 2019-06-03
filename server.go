@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/smtp"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -115,7 +116,7 @@ func group(msg *daemon.Msg) (messages []*emailq.Msg) {
 func sendLoop(tick <-chan time.Time) {
 	err := q.Recover()
 	if err != nil {
-		log.Println("Error recovering:", err)
+		log.Println("Error recovering:", err, debug.Stack())
 	}
 
 	for {

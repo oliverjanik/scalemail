@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/textproto"
 	"regexp"
+	"runtime/debug"
 	"strings"
 )
 
@@ -56,7 +57,7 @@ func handle(c *textproto.Conn) {
 	defer c.Close()
 	defer func() {
 		if r := recover(); r != nil {
-			log.Println("Something went wrong:", r)
+			log.Println("Something went wrong:", r, debug.Stack())
 		}
 	}()
 
