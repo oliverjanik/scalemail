@@ -75,6 +75,8 @@ func converse(c *textproto.Conn) {
 			return
 		}
 
+		log.Println("#", s)
+
 		cmd := strings.ToUpper(s[:4])
 
 		switch cmd {
@@ -112,6 +114,8 @@ func converse(c *textproto.Conn) {
 }
 
 func write(c *textproto.Conn, msg string) {
+	log.Println("$", msg)
+
 	if err := c.Writer.PrintfLine(msg); err != nil {
 		panic(err)
 	}
