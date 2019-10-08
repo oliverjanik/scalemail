@@ -17,10 +17,13 @@ import (
 	"strings"
 	"time"
 
+	"scalemail/daemon"
+	"scalemail/emailq"
+
 	dkim "github.com/emersion/go-dkim"
-	"github.com/oliverjanik/scalemail/daemon"
-	"github.com/oliverjanik/scalemail/emailq"
 )
+
+const version = "0.6"
 
 var (
 	q            *emailq.EmailQ
@@ -66,8 +69,9 @@ func main() {
 
 	daemon.HandleFunc(handle)
 
+	log.Println("Version:", version)
 	log.Println("Listening on :587")
-	err = daemon.ListenAndServe(":587", false)
+	err = daemon.ListenAndServe(":587")
 	if err != nil {
 		log.Println("Could not launch daeamon:", err)
 	}
