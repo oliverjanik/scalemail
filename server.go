@@ -23,7 +23,7 @@ import (
 	dkim "github.com/emersion/go-dkim"
 )
 
-const version = "0.6"
+const version = "0.7"
 
 var (
 	q            *emailq.EmailQ
@@ -124,13 +124,15 @@ func sendLoop(tick <-chan time.Time) {
 	}
 
 	for {
-		key, msg, err := q.Pop()
-		if err != nil {
-			log.Print(err)
-		}
+		for {
+			key, msg, err := q.Pop()
+			if err != nil {
+				log.Print(err)
+			}
 
-		if key != nil {
-			go sendMsg(key, msg)
+			if key != nil {
+				go sendMsg(key, msg)
+			}
 		}
 
 		// wait for signal or tick
