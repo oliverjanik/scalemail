@@ -8,3 +8,4 @@ emails.db
 emails.db.lock
 private.key
 public.key
+.vs/

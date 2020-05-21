@@ -107,16 +107,12 @@ func (q *EmailQ) Retry(key []byte) error {
 
 		incoming := tx.Bucket(incomingBucket)
 
-		t, err := time.Parse(time.RFC3339Nano, string(key))
-		if err != nil {
-			return err
-		}
-
 		m := decode(msg)
 		m.Retry++
-		t = t.Add(time.Duration(m.Retry*m.Retry) * time.Minute)
 
+		t := time.Now().Add(time.Duration(m.Retry*m.Retry) * time.Minute)
 		key = []byte(t.Format(time.RFC3339Nano))
+
 		msg = encode(m)
 
 		return incoming.Put(key, msg)

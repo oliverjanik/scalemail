@@ -86,7 +86,7 @@ func handle(msg *daemon.Msg) {
 			log.Print(err)
 			continue
 		}
-		log.Println("Pushing incoming email. Queue length", q.Length())
+		log.Println("Pushing incoming email", msg.To, ". Queue length", q.Length())
 	}
 
 	// wake up sender
@@ -159,7 +159,7 @@ func sendMsg(key []byte, msg *emailq.Msg) {
 		return
 	}
 
-	log.Println("Sending failed, message scheduled for retry:", err)
+	log.Println("Sending failed for", msg.To, "message scheduled for retry:", err)
 
 	if msg.Retry == 6 {
 		log.Println("Maximum retries reached:", msg.To)
