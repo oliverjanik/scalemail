@@ -23,7 +23,7 @@ import (
 	dkim "github.com/emersion/go-dkim"
 )
 
-const version = "0.7"
+const version = "0.8"
 
 var (
 	q            *emailq.EmailQ
@@ -130,9 +130,11 @@ func sendLoop(tick <-chan time.Time) {
 				log.Print(err)
 			}
 
-			if key != nil {
-				go sendMsg(key, msg)
+			if key == nil {
+				break
 			}
+
+			go sendMsg(key, msg)
 		}
 
 		// wait for signal or tick
@@ -178,6 +180,11 @@ func sendMsg(key []byte, msg *emailq.Msg) {
 }
 
 func send(msg *emailq.Msg) error {
+	if msg.Host == "example.com" {
+		log.Println("Skipping test domain:", msg.Host)
+		return nil
+	}
+
 	mda, err := findMDA(msg.Host)
 	if err != nil {
 		return err
