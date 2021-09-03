@@ -20,10 +20,10 @@ import (
 	"scalemail/daemon"
 	"scalemail/emailq"
 
-	dkim "github.com/emersion/go-dkim"
+	"github.com/emersion/go-msgauth/dkim"
 )
 
-const version = "0.8"
+const version = "0.9"
 
 var (
 	q            *emailq.EmailQ
