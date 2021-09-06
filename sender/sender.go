@@ -40,12 +40,6 @@ func WithDKIM(key crypto.Signer, domain, selector string) func(*Sender) {
 }
 
 func (s *Sender) SendMsg(key []byte, msg *emailq.Msg) {
-	if msg.Retry == 0 {
-		log.Println("Sending email out to", msg.To)
-	} else {
-		log.Printf("Retrying (%v) email out to %v\n", msg.Retry, msg.To)
-	}
-
 	err := s.send(msg)
 	if err == nil {
 		err = s.q.RemoveDelivered(key)
@@ -74,45 +68,81 @@ func (s *Sender) SendMsg(key []byte, msg *emailq.Msg) {
 }
 
 func (s *Sender) send(msg *emailq.Msg) error {
-	if msg.Host == "example.com" {
-		log.Println("Skipping test domain:", msg.Host)
+	conn, addr, err := open(msg.Host)
+	if err != nil {
+		log.Println("Failed to dial", msg.Host, ":", err)
+		return err
+	}
+
+	if conn == nil { // no connection let's short circuit
 		return nil
 	}
+	defer conn.Close()
 
-	mda, err := findMDA(msg.Host)
+	err = s.sayHello(conn, addr)
+	if err != nil {
+		log.Println("Failed to init connection to", msg.Host, ":", err)
+		return err
+	}
+
+	err = s.sendSingle(conn, msg)
 	if err != nil {
 		return err
 	}
 
-	host := mda[:len(mda)-1]
+	return conn.Quit()
+}
 
-	c, err := smtp.Dial(host + ":25") // remove dot and add port
-	if err != nil {
-		return err
+func open(host string) (*smtp.Client, string, error) {
+	if host == "example.com" {
+		log.Println("Skipping test domain:", host)
+		return nil, "", nil
 	}
-	defer c.Close()
 
-	if err = c.Hello(s.hello); err != nil {
+	mda, err := findMDA(host)
+	if err != nil {
+		return nil, "", err
+	}
+
+	addr := mda[:len(mda)-1]
+
+	c, err := smtp.Dial(addr + ":25") // remove dot and add port
+	return c, addr, err
+}
+
+func (s *Sender) sayHello(c *smtp.Client, addr string) error {
+	// start the conversation
+	if err := c.Hello(s.hello); err != nil {
 		return err
 	}
 
 	// attempt TLS
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		config := &tls.Config{
-			ServerName:         host,
+			ServerName:         addr,
 			InsecureSkipVerify: true,
 		}
-		if err = c.StartTLS(config); err != nil {
+		if err := c.StartTLS(config); err != nil {
 			return err
 		}
 	}
 
-	if err = c.Mail(msg.From); err != nil {
+	return nil
+}
+
+func (s *Sender) sendSingle(c *smtp.Client, msg *emailq.Msg) error {
+	if msg.Retry == 0 {
+		log.Println("Sending email out to", msg.To)
+	} else {
+		log.Printf("Retrying (%v) email out to %v\n", msg.Retry, msg.To)
+	}
+
+	if err := c.Mail(msg.From); err != nil {
 		return err
 	}
 
 	for _, addr := range msg.To {
-		if err = c.Rcpt(addr); err != nil {
+		if err := c.Rcpt(addr); err != nil {
 			return err
 		}
 	}
@@ -132,7 +162,7 @@ func (s *Sender) send(msg *emailq.Msg) error {
 		return err
 	}
 
-	return c.Quit()
+	return nil
 }
 
 // Find Mail Delivery Agent based on DNS MX record
