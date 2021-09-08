@@ -1,128 +1,84 @@
 package sender
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/tls"
 	"errors"
-	"io"
-	"log"
+	"fmt"
 	"net"
 	"net/smtp"
+	"strings"
 
 	"scalemail/emailq"
-
-	"github.com/emersion/go-msgauth/dkim"
 )
 
-// Sends out emails and manages outgoing connections
-type Sender struct {
-	q            *emailq.EmailQ
-	hello        string
-	dkimKey      crypto.Signer
-	dkimDomain   string
-	dkimSelector string
+type Connection struct {
+	addr string
+	c    *smtp.Client
+
+	hello string
+
+	signer *Signer
 }
 
-func NewSender(q *emailq.EmailQ, hello string, options ...func(*Sender)) *Sender {
-	return &Sender{
-		q:     q,
-		hello: hello,
+func NewConnection(hello string, options ...func(*Connection)) *Connection {
+	c := &Connection{hello: hello}
+
+	for _, opt := range options {
+		opt(c)
 	}
+
+	return c
 }
 
-func WithDKIM(key crypto.Signer, domain, selector string) func(*Sender) {
-	return func(s *Sender) {
-		s.dkimKey = key
-		s.dkimDomain = domain
-		s.dkimSelector = selector
-	}
-}
-
-func (s *Sender) SendMsg(key []byte, msg *emailq.Msg) {
-	err := s.send(msg)
-	if err == nil {
-		err = s.q.RemoveDelivered(key)
-		if err != nil {
-			log.Println("Error removing delivered:", err)
+func WithDKIM(domain, selector string, key crypto.Signer) func(*Connection) {
+	return func(c *Connection) {
+		if key == nil || domain == "" || selector == "" {
+			return
 		}
-		return
-	}
 
-	log.Println("Sending failed for", msg.To, "message scheduled for retry:", err)
-
-	if msg.Retry == 6 {
-		log.Println("Maximum retries reached:", msg.To)
-		err = s.q.Kill(key)
-		if err != nil {
-			log.Println("Error killing msg:", err)
-		}
-		return
-	}
-
-	// schedule for retry
-	err = s.q.Retry(key)
-	if err != nil {
-		log.Println("Error retrying:", err)
+		c.signer = NewSigner(domain, selector, key)
 	}
 }
 
-func (s *Sender) send(msg *emailq.Msg) error {
-	conn, addr, err := open(msg.Host)
-	if err != nil {
-		log.Println("Failed to dial", msg.Host, ":", err)
-		return err
-	}
-
-	if conn == nil { // no connection let's short circuit
-		return nil
-	}
-	defer conn.Close()
-
-	err = s.sayHello(conn, addr)
-	if err != nil {
-		log.Println("Failed to init connection to", msg.Host, ":", err)
-		return err
-	}
-
-	err = s.sendSingle(conn, msg)
-	if err != nil {
-		return err
-	}
-
-	return conn.Quit()
-}
-
-func open(host string) (*smtp.Client, string, error) {
-	if host == "example.com" {
-		log.Println("Skipping test domain:", host)
-		return nil, "", nil
-	}
-
+// Opens an SMTP connection to given host
+func (c *Connection) Open(host string) error {
+	// find target server, e.g. gmail
 	mda, err := findMDA(host)
 	if err != nil {
-		return nil, "", err
+		return fmt.Errorf("failed to look up MX record for %v: %v", host, err)
 	}
 
-	addr := mda[:len(mda)-1]
+	// remove trailing dot from the MX record
+	addr := strings.TrimSuffix(mda, ".")
 
-	c, err := smtp.Dial(addr + ":25") // remove dot and add port
-	return c, addr, err
+	c.c, err = smtp.Dial(addr + ":25") // add port
+	if err != nil {
+		return fmt.Errorf("failed to dial %v: %v", host, err)
+	}
+
+	if c == nil { // no connection let's short circuit
+		return fmt.Errorf("connection not made to %v", host)
+	}
+
+	return nil
 }
 
-func (s *Sender) sayHello(c *smtp.Client, addr string) error {
+// Initialises the conversation with the remote server and negotiates encryption
+// This call has to appear before sending any emails
+func (c *Connection) Hello() error {
 	// start the conversation
-	if err := c.Hello(s.hello); err != nil {
+	if err := c.c.Hello(c.hello); err != nil {
 		return err
 	}
 
 	// attempt TLS
-	if ok, _ := c.Extension("STARTTLS"); ok {
+	if ok, _ := c.c.Extension("STARTTLS"); ok {
 		config := &tls.Config{
-			ServerName:         addr,
+			ServerName:         c.addr,
 			InsecureSkipVerify: true,
 		}
-		if err := c.StartTLS(config); err != nil {
+		if err := c.c.StartTLS(config); err != nil {
 			return err
 		}
 	}
@@ -130,29 +86,24 @@ func (s *Sender) sayHello(c *smtp.Client, addr string) error {
 	return nil
 }
 
-func (s *Sender) sendSingle(c *smtp.Client, msg *emailq.Msg) error {
-	if msg.Retry == 0 {
-		log.Println("Sending email out to", msg.To)
-	} else {
-		log.Printf("Retrying (%v) email out to %v\n", msg.Retry, msg.To)
-	}
-
-	if err := c.Mail(msg.From); err != nil {
+func (c *Connection) Send(msg *emailq.Msg) error {
+	if err := c.c.Mail(msg.From); err != nil {
 		return err
 	}
 
 	for _, addr := range msg.To {
-		if err := c.Rcpt(addr); err != nil {
+		if err := c.c.Rcpt(addr); err != nil {
 			return err
 		}
 	}
 
-	w, err := c.Data()
+	w, err := c.c.Data()
 	if err != nil {
 		return err
 	}
 
-	if s.dkimKey == nil || s.sign(msg.Data, w) != nil {
+	// if signer isn't configured or signing fails, send the message without signature
+	if c.signer == nil || c.signer.Sign(msg.Data, w) != nil {
 		if _, err = w.Write(msg.Data); err != nil {
 			return err
 		}
@@ -165,6 +116,11 @@ func (s *Sender) sendSingle(c *smtp.Client, msg *emailq.Msg) error {
 	return nil
 }
 
+// Finalises and closes the connection
+func (c *Connection) Quit() error {
+	return c.c.Quit()
+}
+
 // Find Mail Delivery Agent based on DNS MX record
 func findMDA(host string) (string, error) {
 	results, err := net.LookupMX(host)
@@ -173,31 +129,9 @@ func findMDA(host string) (string, error) {
 	}
 
 	if len(results) == 0 {
-		return "", errors.New("No MX records found")
+		return "", errors.New("no MX records found")
 	}
 
 	// todo: support for multiple MX records
 	return results[0].Host, nil
-}
-
-func (s *Sender) sign(email []byte, w io.Writer) error {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("dkim.Sign panicked:", r)
-		}
-	}()
-
-	r := bytes.NewReader(email)
-	options := &dkim.SignOptions{
-		Domain:   s.dkimDomain,
-		Selector: s.dkimSelector,
-		Signer:   s.dkimKey,
-	}
-
-	err := dkim.Sign(w, r, options)
-	if err != nil {
-		log.Println("Error signing email:", err)
-	}
-
-	return err
 }

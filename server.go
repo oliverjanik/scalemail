@@ -4,8 +4,8 @@ import (
 	"crypto"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"runtime/debug"
@@ -17,7 +17,7 @@ import (
 	"scalemail/sender"
 )
 
-const version = "0.10"
+const version = "0.11"
 
 var (
 	q            *emailq.EmailQ
@@ -59,15 +59,8 @@ func main() {
 	// wakes up sending goroutine every minute to check queue and run scheduled messages
 	t := time.NewTicker(time.Duration(1) * time.Minute)
 
-	// create the sender
-	s := sender.NewSender(
-		q,
-		localname,
-		sender.WithDKIM(signer, dkimDomain, dkimSelector),
-	)
-
 	// kick off the sending loop
-	go sendLoop(s, t.C)
+	go sendLoop(t.C)
 
 	daemon.HandleFunc(handle)
 
@@ -84,7 +77,7 @@ func main() {
 }
 
 func handle(msg *daemon.Msg) {
-	for _, m := range group(msg) {
+	for _, m := range split(msg) {
 		err := q.Push(m)
 		if err != nil {
 			log.Print(err)
@@ -100,8 +93,8 @@ func handle(msg *daemon.Msg) {
 	}
 }
 
-// groups messages by host for easier delivery
-func group(msg *daemon.Msg) (messages []*emailq.Msg) {
+// splits messages by host, incoming email to 3 different domains becomes 3 messages
+func split(msg *daemon.Msg) (messages []*emailq.Msg) {
 	hostMap := make(map[string][]string)
 
 	for _, to := range msg.To {
@@ -121,7 +114,7 @@ func group(msg *daemon.Msg) (messages []*emailq.Msg) {
 	return messages
 }
 
-func sendLoop(s *sender.Sender, tick <-chan time.Time) {
+func sendLoop(tick <-chan time.Time) {
 	err := q.Recover()
 	if err != nil {
 		log.Println("Error recovering:", err, debug.Stack())
@@ -129,16 +122,21 @@ func sendLoop(s *sender.Sender, tick <-chan time.Time) {
 
 	for {
 		for {
-			key, msg, err := q.Pop()
+			keys, messages, err := q.PopBatch(20)
 			if err != nil {
 				log.Print(err)
 			}
 
-			if key == nil {
+			// nothing else to send, awesome!
+			if len(keys) == 0 {
 				break
 			}
 
-			go s.SendMsg(key, msg)
+			grouped := groupByHost(keys, messages)
+
+			for host, batch := range grouped {
+				go sendBatch(host, batch)
+			}
 		}
 
 		// wait for signal or tick
@@ -146,6 +144,100 @@ func sendLoop(s *sender.Sender, tick <-chan time.Time) {
 		case <-tick:
 		case <-signal:
 		}
+	}
+}
+
+type msgWithKey struct {
+	key []byte
+	msg *emailq.Msg
+}
+
+func sendBatch(host string, messages []msgWithKey) {
+	c := sender.NewConnection(localname, sender.WithDKIM(dkimDomain, dkimSelector, signer))
+
+	if host == "example.com" {
+		log.Println("Skipping test domain:", host)
+
+		for _, m := range messages {
+			handleSuccess(m.key)
+		}
+
+		return
+	}
+
+	log.Println("Connecting to", host)
+
+	err := c.Open(host)
+	if err != nil {
+		for _, m := range messages {
+			handleError(m.key, m.msg, err)
+		}
+
+		return
+	}
+
+	defer c.Quit()
+
+	err = c.Hello()
+	if err != nil {
+		for _, m := range messages {
+			handleError(m.key, m.msg, err)
+		}
+
+		return
+	}
+
+	for _, m := range messages {
+		if m.msg.Retry == 0 {
+			log.Println("Sending email out to", m.msg.To)
+		} else {
+			log.Printf("Retrying (%v) email out to %v\n", m.msg.Retry, m.msg.To)
+		}
+
+		err = c.Send(m.msg)
+		if err != nil {
+			handleError(m.key, m.msg, err)
+		} else {
+			handleSuccess(m.key)
+		}
+	}
+}
+
+func groupByHost(keys [][]byte, messages []*emailq.Msg) map[string][]msgWithKey {
+	var result = make(map[string][]msgWithKey)
+
+	for i, key := range keys {
+		msg := messages[i]
+
+		result[msg.Host] = append(result[msg.Host], msgWithKey{key: key, msg: msg})
+	}
+
+	return result
+}
+
+func handleSuccess(key []byte) {
+	err := q.RemoveDelivered(key)
+	if err != nil {
+		log.Println("Error removing delivered:", err)
+	}
+}
+
+func handleError(key []byte, msg *emailq.Msg, err error) {
+	log.Println("Sending failed for", msg.To, "message scheduled for retry:", err)
+
+	if msg.Retry == 6 {
+		log.Println("Maximum retries reached:", msg.To)
+		err = q.Kill(key)
+		if err != nil {
+			log.Println("Error killing msg:", err)
+		}
+		return
+	}
+
+	// schedule for retry
+	err = q.Retry(key)
+	if err != nil {
+		log.Println("Error retrying:", err)
 	}
 }
 
@@ -157,7 +249,7 @@ func readDKIMKey(filename string) (crypto.Signer, error) {
 
 	block, _ := pem.Decode(buf)
 	if block == nil {
-		return nil, errors.New("Could not decode PEM file")
+		return nil, fmt.Errorf("could not decode PEM file %v", filename)
 	}
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)

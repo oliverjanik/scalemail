@@ -110,7 +110,7 @@ func (q *EmailQ) Retry(key []byte) error {
 		m := decode(msg)
 		m.Retry++
 
-		t := time.Now().Add(time.Duration(m.Retry*m.Retry) * time.Minute)
+		t := time.Now().Add(time.Duration(m.Retry*m.Retry*2) * time.Minute)
 		key = []byte(t.Format(time.RFC3339Nano))
 
 		msg = encode(m)
@@ -174,6 +174,26 @@ func (q *EmailQ) Pop() (key []byte, msg *Msg, err error) {
 	})
 
 	return key, msg, err
+}
+
+// Pops multiple messages off the queue, until max or error is reached or the queue is empty
+func (q *EmailQ) PopBatch(max int) (keys [][]byte, messages []*Msg, returnErr error) {
+	for len(keys) < max {
+		key, msg, err := q.Pop()
+		if err != nil {
+			returnErr = err
+			break
+		}
+
+		if key == nil {
+			break
+		}
+
+		keys = append(keys, key)
+		messages = append(messages, msg)
+	}
+
+	return
 }
 
 // Recover re-queues outgoing emails that were interrupted
