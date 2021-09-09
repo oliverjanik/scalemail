@@ -17,7 +17,7 @@ import (
 	"scalemail/sender"
 )
 
-const version = "0.11"
+const version = "0.12"
 
 var (
 	q            *emailq.EmailQ
@@ -121,8 +121,9 @@ func sendLoop(tick <-chan time.Time) {
 	}
 
 	for {
+
 		for {
-			keys, messages, err := q.PopBatch(20)
+			keys, messages, err := q.PopBatch(50)
 			if err != nil {
 				log.Print(err)
 			}
@@ -143,6 +144,7 @@ func sendLoop(tick <-chan time.Time) {
 		select {
 		case <-tick:
 		case <-signal:
+			time.Sleep(3 * time.Second) // grace period
 		}
 	}
 }
