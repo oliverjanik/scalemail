@@ -5,9 +5,23 @@ import (
 	"crypto"
 	"io"
 	"log"
+	"strings"
 
 	"github.com/emersion/go-msgauth/dkim"
 )
+
+// Signers holds one Signer per sending domain, keyed by lower-case domain
+type Signers map[string]*Signer
+
+// For picks the signer for the sender address domain, nil when the domain has no key
+func (s Signers) For(from string) *Signer {
+	at := strings.LastIndex(from, "@")
+	if at < 0 {
+		return nil
+	}
+
+	return s[strings.ToLower(from[at+1:])]
+}
 
 // Encapsulates dkim package signing with error handling
 type Signer struct {
