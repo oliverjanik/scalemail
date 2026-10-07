@@ -1,7 +1,6 @@
 package sender
 
 import (
-	"crypto"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -18,7 +17,7 @@ type Connection struct {
 
 	hello string
 
-	signer *Signer
+	signers Signers
 }
 
 func NewConnection(hello string, options ...func(*Connection)) *Connection {
@@ -31,13 +30,9 @@ func NewConnection(hello string, options ...func(*Connection)) *Connection {
 	return c
 }
 
-func WithDKIM(domain, selector string, key crypto.Signer) func(*Connection) {
+func WithDKIM(signers Signers) func(*Connection) {
 	return func(c *Connection) {
-		if key == nil || domain == "" || selector == "" {
-			return
-		}
-
-		c.signer = NewSigner(domain, selector, key)
+		c.signers = signers
 	}
 }
 
@@ -102,8 +97,9 @@ func (c *Connection) Send(msg *emailq.Msg) error {
 		return err
 	}
 
-	// if signer isn't configured or signing fails, send the message without signature
-	if c.signer == nil || c.signer.Sign(msg.Data, w) != nil {
+	// if the sender domain has no key or signing fails, send the message without signature
+	signer := c.signers.For(msg.From)
+	if signer == nil || signer.Sign(msg.Data, w) != nil {
 		if _, err = w.Write(msg.Data); err != nil {
 			return err
 		}

@@ -17,33 +17,21 @@ import (
 	"scalemail/sender"
 )
 
-const version = "0.12"
+const version = "0.13"
 
 var (
-	q            *emailq.EmailQ
-	localname    string
-	dkimKey      string
-	dkimDomain   string
-	dkimSelector string
-	signer       crypto.Signer
-	signal       chan struct{}
+	q         *emailq.EmailQ
+	localname string
+	signers   = sender.Signers{}
+	signal    chan struct{}
 )
 
 func main() {
 	flag.StringVar(&localname, "localname", "localhost", "What server sends out as helo greeting")
-	flag.StringVar(&dkimKey, "dkimKey", "", "DKIM Private Key used to sign the emails")
-	flag.StringVar(&dkimDomain, "dkimDomain", "", "DKIM Domain")
-	flag.StringVar(&dkimSelector, "dkimSelector", "", "DKIM Selector")
+	flag.Func("dkim", "DKIM signing key as domain:selector:keyfile, repeat for each sending domain", addDKIM)
 	flag.Parse()
 
 	log.Println("Localname:", localname)
-	if dkimKey != "" && dkimDomain != "" && dkimSelector != "" {
-		var err error
-		signer, err = readDKIMKey(dkimKey)
-		if err != nil {
-			log.Println("Could not parse DKIM Private key, emails will not be signed:", err)
-		}
-	}
 
 	// open up persistent queue
 	var err error
@@ -155,7 +143,7 @@ type msgWithKey struct {
 }
 
 func sendBatch(host string, messages []msgWithKey) {
-	c := sender.NewConnection(localname, sender.WithDKIM(dkimDomain, dkimSelector, signer))
+	c := sender.NewConnection(localname, sender.WithDKIM(signers))
 
 	if host == "example.com" {
 		log.Println("Skipping test domain:", host)
@@ -241,6 +229,27 @@ func handleError(key []byte, msg *emailq.Msg, err error) {
 	if err != nil {
 		log.Println("Error retrying:", err)
 	}
+}
+
+// parses one -dkim flag value and registers its signer; a bad key is logged and that domain goes unsigned
+func addDKIM(value string) error {
+	parts := strings.SplitN(value, ":", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return fmt.Errorf("expected domain:selector:keyfile, got %q", value)
+	}
+
+	domain, selector, keyfile := strings.ToLower(parts[0]), parts[1], parts[2]
+
+	key, err := readDKIMKey(keyfile)
+	if err != nil {
+		log.Printf("Could not parse DKIM Private key for %v, its emails will not be signed: %v\n", domain, err)
+		return nil
+	}
+
+	signers[domain] = sender.NewSigner(domain, selector, key)
+	log.Println("DKIM signing enabled for", domain, "selector", selector)
+
+	return nil
 }
 
 func readDKIMKey(filename string) (crypto.Signer, error) {
